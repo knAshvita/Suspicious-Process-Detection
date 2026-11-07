@@ -6,7 +6,8 @@ import pandas as pd
 import psutil
 
 # 1. Verify and Load Saved Artifacts
-MODEL_PATH = "xgboost_process_detector.pkl"
+#MODEL_PATH = "xgboost_process_detector.pkl"
+MODEL_PATH = "hybrid_process_detector.pkl"
 SCALER_PATH = "process_scaler.pkl"
 DATASET_PATH = "Obfuscated-MalMem2022.csv"
 
@@ -112,44 +113,51 @@ def scan_live_process(process_name="notepad.exe"):
     print("=========================================\n")
 
 
-def run_controlled_simulation(threat_type="Ransomware"):
+def run_controlled_simulation(threat_type="Spyware"):
     """
-    Safely feeds real, verified malware telemetry from the dataset into the trained pipeline.
-    Demonstrates multi-class detection without executing dangerous code.
+    Safely feeds real, verified malware telemetry from the dataset into the model.
+    Picks a random authentic sample each time for dynamic metrics and accurate family detection.
     """
     print("\n=========================================")
     print("    ML-BASED PROCESS DETECTION SYSTEM    ")
     print("=========================================")
-    print(f"Mode           : CONTROLLED THREAT SIMULATION")
+    print("Mode           : CONTROLLED THREAT SIMULATION")
     print(f"Simulated Type : {threat_type}")
     print("\n[*] Loading behavioral memory telemetry profile...")
-    
-    # Retrieve a representative sample from dataset
-    matched_samples = df_raw[df_raw['Category'].str.contains(threat_type, na=False)]
-    if matched_samples.empty:
-        matched_samples = df_raw[df_raw['Class'] == 'Malware']
-        
-    sample = matched_samples[feature_columns].iloc[[0]]
-    
-    print(f" > Memory Services Count (svcscan) : {sample['svcscan.nservices'].values[0]}")
-    print(f" > Active File Handles (handles)   : {sample['handles.nfile'].values[0]}")
-    print(f" > Injected Code Pages (malfind)   : {sample['malfind.ninjections'].values[0]}")
-    
+
+    # Filter by threat category
+    matched = df_raw[df_raw['Category'].astype(str).str.contains(threat_type, case=False, na=False)]
+    if matched.empty:
+        matched = df_raw[df_raw['Class'] == 'Malware']
+
+    # Select a random sample each time so values & percentages are dynamic
+    sample_row = matched.sample(n=1)
+    sample_features = sample_row[feature_columns]
+
+    # Extract behavioral indicators
+    svc_count = sample_row['svcscan.nservices'].values[0] if 'svcscan.nservices' in sample_row else 'N/A'
+    handles_count = sample_row['handles.nfile'].values[0] if 'handles.nfile' in sample_row else 'N/A'
+    injections = sample_row['malfind.ninjections'].values[0] if 'malfind.ninjections' in sample_row else 'N/A'
+
+    print(f" > Memory Services Count (svcscan) : {svc_count}")
+    print(f" > Active File Handles (handles)   : {handles_count}")
+    print(f" > Injected Code Pages (malfind)   : {injections}")
+
     print("\n[*] Running ML classification...")
-    scaled_sample = scaler.transform(sample)
+    scaled_sample = scaler.transform(sample_features)
     pred_idx = model.predict(scaled_sample)[0]
     probabilities = model.predict_proba(scaled_sample)[0]
     confidence = probabilities[pred_idx] * 100
     verdict = class_names[pred_idx]
-    
+
     print(f"\nPrediction     : {verdict.upper()}")
     print(f"Confidence     : {confidence:.2f}%")
-    
+
     if pred_idx == 0:
         print("\nSTATUS         : SAFE [✓]")
     else:
         print("\nSTATUS         : THREAT DETECTED [!]")
-        print(f"ACTION         : TERMINATE_PROCESS / ALERT_SOC")
+        print("ACTION         : TERMINATE_PROCESS / ALERT_SOC")
     print("=========================================\n")
 
 

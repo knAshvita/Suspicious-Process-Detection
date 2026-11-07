@@ -9,9 +9,11 @@ An operating-system-level security system utilizing Machine Learning to detect, 
 - **Domain:** Operating System Security & Machine Learning-Based Malware Detection
 - **Target Environment:** Runtime Process Inspection and Volatile Memory Analysis
 - **Core Problem:** Traditional antivirus systems that rely heavily on static file signatures and hashes can be challenged by polymorphic code, packed malware, and fileless execution techniques.
-- **Solution:** An **XGBoost-based classification pipeline** trained on behavioral memory artifacts from the `CIC-MalMem-2022` dataset, integrated with an interactive process monitoring engine.
+- **Solution:** A **3-Model Hybrid Soft-Voting Ensemble Classifier** trained on behavioral memory artifacts from the `CIC-MalMem-2022` dataset, integrated with an interactive process monitoring engine.
 
-The project combines offline model training and evaluation with a live monitoring demonstration that collects available process information and uses the trained model to classify processes into four categories.
+The project combines offline model training and evaluation with a live monitoring demonstration that collects available process information and uses the trained hybrid model to classify processes into four categories.
+
+---
 
 ## 📊 Dataset & Multi-Class Classification
 
@@ -40,37 +42,104 @@ This project uses multi-class classification to distinguish between benign proce
 
 ## 🔬 Model Training & Performance
 
-Four machine learning models were trained and benchmarked using an **80:20 train-test split**.
+Four architectures were evaluated using the `CIC-MalMem-2022` dataset under identical **80:20 stratified train-test split conditions**.
 
-| Model | Accuracy | Macro F1-Score | Status |
+### 1. Individual Model Evaluation
+
+The following standalone machine learning algorithms were evaluated before developing the hybrid ensemble:
+
+| Model | Accuracy | Macro F1-Score | Role |
 |---|---:|---:|---|
-| **XGBoost** | **84.31%** | **76.44%** | Selected Model |
-| Random Forest | 81.87% | 72.86% | Evaluated Baseline |
-| Logistic Regression | 74.02% | 61.04% | Evaluated Baseline |
-| Linear SVM | 73.00% | 59.43% | Evaluated Baseline |
+| **Logistic Regression** | **74.02%** | **61.03%** | Linear Baseline |
+| **Random Forest** | **83.34%** | **75.06%** | Bagging Tree Baseline |
+| **XGBoost** | **85.40%** | **78.06%** | Gradient Boosting Baseline |
 
-### Why XGBoost?
+### 2. Hybrid Model Architecture
 
-XGBoost achieved the highest accuracy and macro F1-score among the evaluated models. It was therefore selected as the primary classification engine.
+Instead of relying on a single algorithm, the final architecture uses a **Soft-Voting Ensemble Classifier** (`VotingClassifier(voting='soft')`).
 
-The macro F1-score gives equal importance to each class, making it useful for assessing performance across multiple categories rather than focusing only on the overall number of correct predictions.
+It combines predictions from the top three algorithms evaluated on the `CIC-MalMem-2022` dataset:
 
-### Key Behavioral Indicators
+1. **XGBoost:** Gradient-boosted decision trees that focus on reducing residual errors.
+2. **Random Forest:** Bagging ensemble of de-correlated decision trees that reduces variance.
+3. **Logistic Regression:** L2-regularized linear baseline that ensures well-bounded probability distributions.
 
-The following dataset features are relevant to the project's behavioral analysis:
+### 3. How Soft Voting Works
 
-- **`svcscan.nservices`** — Number of detected Windows services.
-- **`svcscan.shared_process_services`** — Information about services associated with shared processes.
-- **`malfind.ninjections`** — Indicators associated with suspicious memory regions and possible process injection.
-- **`handles.nfile`** — Number of file handles, which can contribute to analyzing process behavior.
+Instead of taking a simple majority vote on the final label, each model outputs a probability distribution across all four classes (Benign, Ransomware, Spyware, Trojan).
 
-These indicators can help a classifier distinguish patterns in the training data. However, individual features do not independently prove that a process is malicious.
+The ensemble calculates a weighted average of these probabilities:
 
-### False Positive Evaluation
+\[
+\hat{P}(\text{Class } k) =
+\frac{
+w_{\text{xgb}}P_{\text{xgb}} +
+w_{\text{rf}}P_{\text{rf}} +
+w_{\text{lr}}P_{\text{lr}}
+}{
+w_{\text{xgb}} + w_{\text{rf}} + w_{\text{lr}}
+}
+\]
 
-The project documentation reports **zero false positives across 5,860 clean system instances** in the evaluated test.
+The class with the highest combined probability score is selected as the final verdict.
 
-This result applies to the tested samples and conditions. It does not guarantee zero false positives on other computers, unseen software, or future real-world workloads.
+The ensemble uses the following weights:
+
+- **XGBoost:** 2
+- **Random Forest:** 2
+- **Logistic Regression:** 1
+
+This approach stabilizes predictions and helps avoid single-model blind spots when analyzing complex, obfuscated memory patterns.
+
+### 4. Model Training Workflow
+
+1. **Dataset Ingestion & Labeling:** The `CIC-MalMem-2022` dataset containing 58,596 process rows and 55 memory features was mapped to four multi-class categories:
+   - `0`: Benign
+   - `1`: Ransomware
+   - `2`: Spyware
+   - `3`: Trojan
+
+2. **Data Splitting & Scaling:** Features were split using an **80/20 stratified train-test split**, followed by `StandardScaler` feature scaling.
+
+3. **Ensemble Assembly:** The three baseline estimators were wrapped inside `VotingClassifier(voting='soft', weights=[2, 2, 1])` to prioritize tree-based models while retaining linear regularization.
+
+4. **Serialization:** The trained ensemble pipeline was saved to disk as `hybrid_process_detector.pkl`.
+
+### 5. Final Model Performance Comparison
+
+Each standalone algorithm and the hybrid model were evaluated under identical 80/20 test split conditions.
+
+| Model Architecture | Accuracy (%) | Macro F1 (%) | Role |
+|---|---:|---:|---|
+| **Logistic Regression** | **74.02%** | **61.03%** | Linear Baseline |
+| **Random Forest** | **83.34%** | **75.06%** | Bagging Tree Baseline |
+| **XGBoost** | **85.40%** | **78.06%** | Gradient Boosting Baseline |
+| **3-Model Hybrid (XGB + RF + LR)** | **84.85%** | **77.26%** | **Ensemble Production Model** |
+
+**Key Observations:**
+
+- **XGBoost** achieved the highest single-model accuracy of **85.40%**.
+- The **3-Model Hybrid** achieved **84.85% accuracy** and **77.26% Macro F1 score**.
+- The hybrid architecture combines the strengths of multiple machine learning algorithms.
+- Soft voting provides a combined probability-based prediction rather than depending on a single classifier.
+
+### 6. Benchmark Graph (`model_comparison_hybrid.png`)
+
+The evaluation script generated and saved a comparison bar chart named **`model_comparison_hybrid.png`**.
+
+**Graph Details:**
+
+- **Layout:** A grouped side-by-side bar chart showing all four architectures along the X-axis:
+  - Logistic Regression
+  - Random Forest
+  - XGBoost
+  - 3-Model Hybrid
+
+- **Bars Displayed:**
+  - **Blue bars (`#2b5c8f`):** Accuracy score (%) for each model.
+  - **Coral / Red bars (`#e26d5c`):** Macro F1 score (%) for each model.
+
+- **Y-Axis Range:** Set from 50% to 100% to clearly show the performance differences between the individual models and the combined hybrid ensemble.
 
 ---
 
@@ -80,12 +149,13 @@ The system follows this general workflow:
 
 1. **Dataset Preparation:** Load the `CIC-MalMem-2022` dataset and prepare the behavioral features.
 2. **Preprocessing:** Apply the fitted `StandardScaler` where required by the pipeline.
-3. **Model Training:** Train and compare XGBoost, Random Forest, Logistic Regression, and Linear SVM.
-4. **Model Evaluation:** Evaluate classification accuracy, macro F1-score, and other relevant metrics.
-5. **Artifact Serialization:** Save the trained XGBoost model and fitted scaler.
-6. **Live Monitoring:** Collect supported process information using `psutil` and Windows process inspection capabilities.
-7. **Classification:** Apply the required feature preparation and model inference to produce a predicted class.
-8. **Threat Reporting:** Display the classification results in the terminal for interactive demonstration.
+3. **Model Training:** Train and compare XGBoost, Random Forest, and Logistic Regression.
+4. **Ensemble Construction:** Combine the three classifiers using a weighted soft-voting mechanism.
+5. **Model Evaluation:** Evaluate classification accuracy, macro F1-score, and other relevant metrics.
+6. **Artifact Serialization:** Save the trained hybrid model pipeline as `hybrid_process_detector.pkl`.
+7. **Live Monitoring:** Collect supported process information using `psutil` and Windows process inspection capabilities.
+8. **Classification:** Apply the required feature preparation and hybrid model inference to produce a predicted class.
+9. **Threat Reporting:** Display the classification results in the terminal for interactive demonstration.
 
 > **Important:** The live detector's reliability depends on whether its runtime feature extraction matches the 55-feature training schema. Ordinary process metadata is not automatically equivalent to the original memory-forensics features.
 
@@ -102,11 +172,11 @@ Suspicious_Process_Detection/
 ├── main_notebook.ipynb
 │   └── Model development, evaluation, and visualizations
 │
-├── xgboost_process_detector.pkl
-│   └── Serialized trained XGBoost classifier
+├── hybrid_process_detector.pkl
+│   └── Serialized trained 3-model hybrid soft-voting ensemble
 │
-├── process_scaler.pkl
-│   └── Fitted StandardScaler preprocessing artifact
+├── model_comparison_hybrid.png
+│   └── Performance comparison graph of all four model architectures
 │
 ├── live_monitor.py
 │   └── Interactive terminal-based process detection engine
@@ -178,7 +248,7 @@ python -m pip install --upgrade pip
 Install the project's main Python dependencies:
 
 ```powershell
-python -m pip install numpy pandas scikit-learn xgboost joblib psutil
+python -m pip install numpy pandas scikit-learn xgboost joblib psutil matplotlib
 ```
 
 These packages serve the following purposes:
@@ -187,10 +257,11 @@ These packages serve the following purposes:
 |---|---|
 | `numpy` | Numerical operations and array processing |
 | `pandas` | Dataset loading and manipulation |
-| `scikit-learn` | Preprocessing, baseline models, and evaluation |
+| `scikit-learn` | Preprocessing, ensemble construction, baseline models, and evaluation |
 | `xgboost` | XGBoost classification model |
 | `joblib` | Loading and saving serialized model artifacts |
 | `psutil` | Runtime process and system information |
+| `matplotlib` | Generating model performance comparison graphs |
 
 ### Troubleshooting Python Installation Paths
 
@@ -210,7 +281,7 @@ python -m pip --version
 If you use a specific Python executable, invoke it directly. For example:
 
 ```powershell
-& "C:\Path\To\Your\Python\python.exe" -m pip install numpy pandas scikit-learn xgboost joblib psutil
+& "C:\Path\To\Your\Python\python.exe" -m pip install numpy pandas scikit-learn xgboost joblib psutil matplotlib
 ```
 
 Replace the example path with the actual path to your installed Python executable.
@@ -222,16 +293,15 @@ Replace the example path with the actual path to your installed Python executabl
 Before running the detector, ensure the following files are present in the project root directory:
 
 - `live_monitor.py`
-- `xgboost_process_detector.pkl`
-- `process_scaler.pkl`
+- `hybrid_process_detector.pkl`
 
 The dataset file is also required if the script uses it for runtime simulations or dataset-based demonstrations:
 
 - `Obfuscated-MalMem2022.csv`
 
-The model and scaler files must be compatible with the feature schema and preprocessing used by the script.
+The model artifact must be compatible with the feature schema and preprocessing used by the script.
 
-**Important:** If these artifacts are not included in the cloned repository, obtain them from the project's authorized source or generate them by running the appropriate training workflow in `main_notebook.ipynb`.
+**Important:** If the hybrid model artifact is not included in the cloned repository, obtain it from the project's authorized source or generate it by running the appropriate training workflow in `main_notebook.ipynb`.
 
 You can list the files in PowerShell using:
 
@@ -243,7 +313,7 @@ Get-ChildItem
 
 ## 💻 Running the Live Demonstration
 
-Once the dependencies are installed and the required model artifacts are available, run the detector from the project root directory:
+Once the dependencies are installed and the required model artifact is available, run the detector from the project root directory:
 
 ```powershell
 python live_monitor.py
@@ -253,19 +323,19 @@ The script should start the interactive terminal-based monitoring workflow, subj
 
 ### Expected Workflow
 
-1. The script loads the trained XGBoost model and preprocessing scaler.
+1. The script loads the trained hybrid model.
 2. It begins collecting the process information supported by the implementation.
 3. The required features are prepared for model inference.
-4. The classifier predicts one of the configured categories.
+4. The hybrid classifier predicts one of the configured categories.
 5. The terminal displays the resulting process classifications and monitoring output.
 
 The exact prompts, output format, monitoring interval, and available commands depend on the current implementation of `live_monitor.py`.
 
 ### If the Script Does Not Start
 
-**Model or scaler file not found**
+**Model file not found**
 
-Check that `xgboost_process_detector.pkl` and `process_scaler.pkl` are present in the expected directory.
+Check that `hybrid_process_detector.pkl` is present in the expected directory.
 
 **Missing Python module**
 
@@ -279,7 +349,7 @@ Replace `<package_name>` with the module named in the error message.
 
 **Feature mismatch error**
 
-Ensure the live monitoring script supplies the same features in the correct order and format expected by the trained model and scaler.
+Ensure the live monitoring script supplies the same features in the correct order and format expected by the trained hybrid model and its preprocessing pipeline.
 
 **Permission or process-access error**
 
@@ -305,7 +375,7 @@ python -m notebook
 
 Open `main_notebook.ipynb` in the Jupyter interface.
 
-The notebook can be used to inspect the dataset, prepare features, train and compare models, evaluate performance, and generate the serialized artifacts when the corresponding training cells are executed.
+The notebook can be used to inspect the dataset, prepare features, train and compare individual models, construct the hybrid soft-voting ensemble, evaluate performance, generate comparison visualizations, and save the trained model artifact when the corresponding training cells are executed.
 
 ---
 
@@ -337,10 +407,10 @@ Use the system for educational, research, and authorized security-testing purpos
 ## 👩‍💻 Project Information
 
 **Project:** ML-Based Suspicious Process Detection System  
-**Primary Model:** XGBoost  
+**Primary Model:** 3-Model Hybrid Soft-Voting Ensemble (XGBoost + Random Forest + Logistic Regression)  
 **Dataset:** CIC-MalMem-2022  
 **Language:** Python  
-**Core Libraries:** NumPy, Pandas, Scikit-learn, XGBoost, Joblib, Psutil  
+**Core Libraries:** NumPy, Pandas, Scikit-learn, XGBoost, Joblib, Psutil, Matplotlib  
 **Repository:** [Suspicious_Process_Detection on GitHub](https://github.com/knAshvita/Suspicious_Process_Detection)
 
 ---
