@@ -3,3 +3,13 @@ __pycache__/
 .venv/
 venv/
 .env
+
+
+# Node.js dependencies and build files
+/node_modules/
+/frontend/node_modules/
+/frontend/dist/
+
+# Accidental root-level npm files (kept locally)
+/package.json
+/package-lock.json

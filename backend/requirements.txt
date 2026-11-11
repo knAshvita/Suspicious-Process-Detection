@@ -1,8 +1,9 @@
+
 fastapi
 uvicorn[standard]
 psutil
 pandas
 numpy
 joblib
-scikit-learn
+scikit-learn==1.9.0
 xgboost
